@@ -196,7 +196,7 @@ def logout():
 @server.before_request
 def check_login():
     # Define public routes that don't need authentication
-    public_routes = ["/login", "/signup", "/login/google", "/login/google/callback", "/login/google/demo", "/"]
+    public_routes = ["/login", "/signup", "/login/google", "/login/google/callback", "/login/google/demo", "/", "/research", "/api-docs", "/privacy", "/terms", "/contact"]
     # Allow static assets
     if request.path.startswith("/assets") or request.path.startswith("/_dash"):
         return
@@ -291,7 +291,7 @@ def grand_landing_page(user_data):
                 html.P("Transform patient metrics into predictive clinical insights instantly utilizing our state-of-the-art neural architecture framework.", className="mx-auto mb-5", style={"maxWidth": "750px", "fontSize": "1.25rem", "color": "rgba(255,255,255,0.6)"}),
                 
                 html.Div(className="d-flex justify-content-center gap-4 mt-4", children=[
-                    dbc.Button([html.I(className="fa-solid fa-bolt me-2"), "Start Assessment"], href="/dashboard" if is_logged_in else "/login", className="btn-pulse px-5 py-3 fs-6 fw-bold", style={"borderRadius": "30px", "background": "linear-gradient(45deg, #00f2ff, #0088ff)", "border": "none", "color": "black", "textTransform": "uppercase", "boxShadow": "0 10px 25px rgba(0, 242, 255, 0.4)"}),
+                    dbc.Button([html.I(className="fa-solid fa-bolt me-2"), "Start Assessment"], href="/login", className="btn-pulse px-5 py-3 fs-6 fw-bold", style={"borderRadius": "30px", "background": "linear-gradient(45deg, #00f2ff, #0088ff)", "border": "none", "color": "black", "textTransform": "uppercase", "boxShadow": "0 10px 25px rgba(0, 242, 255, 0.4)"}),
                     dbc.Button([html.I(className="fa-solid fa-play me-2"), "Simulator Demo"], href="#live-demo", external_link=True, className="btn-pulse px-5 py-3 fs-6 fw-bold", style={"borderRadius": "30px", "background": "rgba(0, 242, 255, 0.15)", "border": "1px solid rgba(0,242,255,0.8)", "color": "white", "backdropFilter": "blur(10px)", "textTransform": "uppercase"}),
                     dbc.Button([html.I(className="fa-solid fa-layer-group me-2"), "Discover Deep Tech"], href="#explore-features", external_link=True, className="btn-pulse px-5 py-3 fs-6 fw-bold", style={"borderRadius": "30px", "background": "rgba(255, 255, 255, 0.1)", "border": "1px solid rgba(255,255,255,0.4)", "color": "white", "backdropFilter": "blur(10px)", "textTransform": "uppercase"})
                 ]),
@@ -925,33 +925,38 @@ def contact_page():
                         dbc.Row(className="mb-3 g-3", children=[
                             dbc.Col([
                                 dbc.Label("Full Name", className="text-muted small mb-1"),
-                                dbc.Input(placeholder="Your Name", className="premium-input")
+                                dbc.Input(id="contact-name", placeholder="Your Name", className="premium-input")
                             ], md=6),
                             dbc.Col([
                                 dbc.Label("Email Address", className="text-muted small mb-1"),
-                                dbc.Input(type="email", placeholder="you@example.com", className="premium-input")
+                                dbc.Input(id="contact-email", type="email", placeholder="you@example.com", className="premium-input")
                             ], md=6),
                         ]),
                         html.Div(className="mb-3", children=[
                             dbc.Label("Subject", className="text-muted small mb-1"),
                             dbc.Select(
+                                id="contact-subject",
                                 options=[
-                                    {"label": "Technical Support", "value": "support"},
-                                    {"label": "API / Developer Inquiry", "value": "api"},
-                                    {"label": "Partnership Request", "value": "partnership"},
-                                    {"label": "Research Collaboration", "value": "research"},
-                                    {"label": "General Question", "value": "general"},
+                                    {"label": "Technical Support", "value": "Technical Support"},
+                                    {"label": "API / Developer Inquiry", "value": "API / Developer Inquiry"},
+                                    {"label": "Partnership Request", "value": "Partnership Request"},
+                                    {"label": "Research Collaboration", "value": "Research Collaboration"},
+                                    {"label": "General Question", "value": "General Question"},
                                 ],
+                                value="General Question",
                                 className="premium-input",
                                 style={"background": "rgba(255,255,255,0.05)", "color": "white", "border": "1px solid rgba(255,255,255,0.1)", "borderRadius": "12px"}
                             )
                         ]),
                         html.Div(className="mb-4", children=[
                             dbc.Label("Message", className="text-muted small mb-1"),
-                            dbc.Textarea(placeholder="Describe your inquiry in detail...", rows=5, className="premium-input")
+                            dbc.Textarea(id="contact-message", placeholder="Describe your inquiry in detail...", rows=5, className="premium-input")
                         ]),
+                        html.Div(id="contact-feedback", className="mb-3"),
                         dbc.Button(
                             [html.I(className="fa-solid fa-paper-plane me-2"), "Send Message"],
+                            id="contact-submit-btn",
+                            n_clicks=0,
                             className="btn-pulse w-100 py-3 fw-bold",
                             style={"borderRadius": "14px", "background": "linear-gradient(45deg, #00f2ff, #0088ff)", "border": "none", "color": "black"}
                         ),
@@ -1168,7 +1173,6 @@ def display_page(pathname, user_data):
     if pathname == "/signup":
         return signup_page()
     if pathname == "/login":
-        if user_data: return central_dashboard(user_data)
         return login_page()
         
     if pathname == "/research":
@@ -1306,6 +1310,60 @@ def handle_patient_registration(submit_clicks, delete_clicks, name, email, mobil
     # Clear form fields on success
     return feedback, tbl, badge, "", "", "", None
 
+# --- Contact Form Callback ---
+@app.callback(
+    Output("contact-feedback", "children"),
+    Input("contact-submit-btn", "n_clicks"),
+    [State("contact-name", "value"),
+     State("contact-email", "value"),
+     State("contact-subject", "value"),
+     State("contact-message", "value")],
+    prevent_initial_call=True
+)
+def handle_contact_submission(n_clicks, name, email, subject, message):
+    if not n_clicks:
+        return dash.no_update
+
+    # Field Validation
+    if not all([name, email, subject, message]):
+        return html.Div(
+            [html.I(className="fa-solid fa-triangle-exclamation me-2"), "Please fill in all fields before sending."],
+            className="text-danger small p-2 rounded",
+            style={"background": "rgba(255,65,54,0.1)", "border": "1px solid rgba(255,65,54,0.3)"}
+        )
+
+    # API Call to Backend
+    try:
+        payload = {
+            "name": name,
+            "email": email,
+            "subject": subject,
+            "message": message
+        }
+        # Assuming the FastAPI backend is running on port 8000
+        response = requests.post("http://127.0.0.1:8000/contact", json=payload, timeout=10)
+        result = response.json()
+
+        if response.status_code == 200 and result.get("status") == "success":
+            return html.Div(
+                [html.I(className="fa-solid fa-circle-check me-2"), "Message sent successfully! We will get back to you soon."],
+                className="text-success small p-2 rounded",
+                style={"background": "rgba(46,204,64,0.1)", "border": "1px solid rgba(46,204,64,0.3)"}
+            )
+        else:
+            error_msg = result.get("error", "Unknown error occurred.")
+            return html.Div(
+                [html.I(className="fa-solid fa-circle-xmark me-2"), f"Failed to send message: {error_msg}"],
+                className="text-danger small p-2 rounded",
+                style={"background": "rgba(255,65,54,0.1)", "border": "1px solid rgba(255,65,54,0.3)"}
+            )
+    except Exception as e:
+        return html.Div(
+            [html.I(className="fa-solid fa-circle-xmark me-2"), f"Connection Error: {str(e)}"],
+            className="text-danger small p-2 rounded",
+            style={"background": "rgba(255,65,54,0.1)", "border": "1px solid rgba(255,65,54,0.3)"}
+        )
+
 # --- Survey Callbacks ---
 @app.callback(
     Output("survey-modal", "is_open"),
@@ -1345,6 +1403,7 @@ def handle_login(n_clicks, email, password):
     if n_clicks:
         user = get_user(email, password)
         if user:
+            session["user"] = user
             return user, "", "/dashboard"
         return dash.no_update, "Invalid email or password", dash.no_update
     return dash.no_update, "", dash.no_update # Return empty error on initial load
@@ -1367,7 +1426,9 @@ def handle_signup(n_clicks, name, phone, email, password, confirm):
             return dash.no_update, "Passwords do not match", dash.no_update
         if email and password and name:
             if add_user(name, phone, email, password):
-                return {"fullname": name, "phone": phone, "email": email}, "", "/dashboard"
+                user = {"fullname": name, "phone": phone, "email": email}
+                session["user"] = user
+                return user, "", "/dashboard"
             return dash.no_update, "Email already exists", dash.no_update
         return dash.no_update, "Please fill all required fields", dash.no_update
     return dash.no_update, "", dash.no_update
