@@ -1341,7 +1341,7 @@ def handle_contact_submission(n_clicks, name, email, subject, message):
             "message": message
         }
         # Assuming the FastAPI backend is running on port 8000
-        response = requests.post("http://127.0.0.1:8000/contact", json=payload, timeout=10)
+        response = requests.post("https://ai-healthcare-diagnosis-system.onrender.com/contact", json=payload, timeout=10)
         result = response.json()
 
         if response.status_code == 200 and result.get("status") == "success":
