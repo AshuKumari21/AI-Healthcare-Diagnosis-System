@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Aegis AI Healthcare Dashboard
 
 Advanced Multi-Disease Diagnostic Platform using Deep Neural Ensembles.
@@ -39,3 +40,7 @@ FLASK_SECRET_KEY=any-random-long-string
 - **Neural Pulse Engine**: Real-time AI inference powered by specialized ML models.
 - **Clinical Reports**: Automated PDF/text report synthesis.
 - **Aegis AI Assistant**: Natural language medical guidance.
+=======
+# AI-Healthcare-Diagnosis-System
+AI-powered healthcare diagnosis system using Machine Learning, FastAPI backend, and Streamlit dashboard for clinical risk prediction.
+>>>>>>> e15babca2b405f4e8ebcfa85dfaf1a34152f30c0
