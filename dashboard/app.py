@@ -1681,4 +1681,4 @@ def generate_report(n, path, feature_values, feature_ids, notes):
     return dict(content=content, filename=f"Health_Report_{disease}.txt")
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run_server(host="0.0.0.0", port=10000)
