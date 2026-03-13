@@ -1680,5 +1680,8 @@ def generate_report(n, path, feature_values, feature_ids, notes):
     content = f"AEGIS AI MEDICAL REPORT\nFocus: {disease.upper()}\nGenerated: {datetime.now().strftime('%Y-%m-%d')}\n\nVitals:\n{vitals_str}\n\nNotes:\n{notes if notes else 'N/A'}"
     return dict(content=content, filename=f"Health_Report_{disease}.txt")
 
+import os
+
 if __name__ == "__main__":
-    app.run_server(host="0.0.0.0", port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run_server(host="0.0.0.0", port=port)
