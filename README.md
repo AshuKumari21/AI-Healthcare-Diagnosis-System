@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Aegis AI Healthcare Dashboard
 
 Advanced Multi-Disease Diagnostic Platform using Deep Neural Ensembles.
@@ -15,10 +14,11 @@ To enable the "Continue with Google" login feature, you must configure your Goog
 5. Configure the Consent Screen (Internal or External).
 6. Select **Web Application**.
 7. Add **Authorized redirect URIs**:
-   - `http://127.0.0.1:8050/login/google/callback`
+   - Local: `http://127.0.0.1:8050/login/google/callback`
+   - Production: `https://your-dashboard-url.onrender.com/login/google/callback`
 
 ### 2. Configure Environment Variables
-Create a file named `.env` in the root directory (the same folder as this README) and add your keys:
+Create a file named `.env` in the root directory and add your keys:
 
 ```env
 # Google OAuth
@@ -27,20 +27,40 @@ GOOGLE_CLIENT_SECRET=your-secret-key
 
 # Flask Security
 FLASK_SECRET_KEY=any-random-long-string
+
+# API URL (Optional, defaults to localhost)
+API_BASE_URL=https://your-api-url.onrender.com
 ```
 
-### 3. Run the Application
-1. Install dependencies: `pip install dash dash-bootstrap-components pandas flask requests python-dotenv`
+### 3. Run the Application Locally
+1. Install dependencies: `pip install -r requirements.txt`
 2. Start the FastAPI backend: `python api/main.py`
 3. Start the Dash dashboard: `python dashboard/app.py`
 4. Open `http://127.0.0.1:8050` in your browser.
 
+## 🌐 Deployment to Render
+
+This project is structured to be deployed as two separate Web Services on Render.
+
+### Service 1: ML Backend (FastAPI)
+- **Environment**: Python
+- **Build Command**: `pip install -r requirements.txt`
+- **Start Command**: `uvicorn api.main:app --host 0.0.0.0 --port $PORT`
+- **Add Environment Variables**:
+  - `GMAIL_USER`: Your Gmail address
+  - `GMAIL_APP_PASSWORD`: Your Gmail App Password (for contact form)
+
+### Service 2: Frontend Dashboard (Dash)
+- **Environment**: Python
+- **Build Command**: `pip install -r requirements.txt`
+- **Start Command**: `gunicorn dashboard.app:server --bind 0.0.0.0:$PORT`
+- **Add Environment Variables**:
+  - `API_BASE_URL`: The URL of your deployed ML Backend Service 1.
+  - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `FLASK_SECRET_KEY`
+  - `REDIRECT_URI`: `https://your-dashboard-url.onrender.com/login/google/callback`
+
 ## 🛠 Features
 - **Multi-Disease Analysis**: Diabetes, Heart, Stroke, Kidney, Liver, and more.
 - **Neural Pulse Engine**: Real-time AI inference powered by specialized ML models.
-- **Clinical Reports**: Automated PDF/text report synthesis.
+- **Clinical Reports**: Automated report synthesis.
 - **Aegis AI Assistant**: Natural language medical guidance.
-=======
-# AI-Healthcare-Diagnosis-System
-AI-powered healthcare diagnosis system using Machine Learning, FastAPI backend, and Streamlit dashboard for clinical risk prediction.
->>>>>>> e15babca2b405f4e8ebcfa85dfaf1a34152f30c0

@@ -36,6 +36,7 @@ server.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 REDIRECT_URI_OVERRIDE = os.getenv("REDIRECT_URI")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 
 # Debug Logging
 is_placeholder = lambda x: not x or "your_client_id" in str(x) or "your_client_secret" in str(x)
@@ -1341,7 +1342,7 @@ def handle_contact_submission(n_clicks, name, email, subject, message):
             "message": message
         }
         # Assuming the FastAPI backend is running on port 8000
-        response = requests.post("https://ai-healthcare-diagnosis-system.onrender.com/contact", json=payload, timeout=10)
+        response = requests.post(f"{API_BASE_URL}/contact", json=payload, timeout=10)
         result = response.json()
 
         if response.status_code == 200 and result.get("status") == "success":
@@ -1584,7 +1585,7 @@ def run_prediction_engine(n, path, feature_values, feature_ids):
             conf = "100.0%" # BMI is a deterministic calculation
         else:
             # API Call with dictionary instead of list
-            resp = requests.post(f"http://127.0.0.1:8000/predict/{disease_id}", json={"features": feature_dict}, timeout=5)
+            resp = requests.post(f"{API_BASE_URL}/predict/{disease_id}", json={"features": feature_dict}, timeout=5)
             resp.raise_for_status()
             data = resp.json()
             
