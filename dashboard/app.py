@@ -30,7 +30,15 @@ app = dash.Dash(
 )
 
 server = app.server
-server.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
+server.secret_key = os.environ.get("FLASK_SECRET_KEY", "a-very-secret-key-12345")
+
+# Initialize Database on startup to ensure tables exist
+from db.database import init_db
+try:
+    init_db()
+    print("--- Database Initialized Successfully ---")
+except Exception as e:
+    print(f"--- Database Init Warning: {e} ---")
 
 # Load Google Credentials from Environment
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
@@ -1125,9 +1133,16 @@ def chat_widget():
 
 
 def serve_layout():
+    # Safe session access for Dash startup validation
+    user_session_data = None
+    try:
+        user_session_data = session.get("user")
+    except Exception:
+        pass
+
     return html.Div([
         dcc.Location(id='url', refresh=False),
-        dcc.Store(id='user-session', storage_type='session', data=session.get("user")),
+        dcc.Store(id='user-session', storage_type='session', data=user_session_data),
         dcc.Store(id='chat-history', data=[{"role": "ai", "text": "Greetings. I am Aegis AI. How can I assist your clinical analysis today?"}]),
         html.Div(id='page-content'),
         chat_widget(),

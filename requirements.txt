@@ -2,6 +2,7 @@ fastapi
 uvicorn
 pandas
 numpy
+scipy
 scikit-learn
 plotly
 dash
@@ -11,3 +12,4 @@ pydantic
 joblib
 requests
 gunicorn
+flask

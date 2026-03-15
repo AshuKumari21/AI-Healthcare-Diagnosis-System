@@ -46,8 +46,14 @@ models = {}
 for key, filename in MODEL_PATHS.items():
     path = os.path.join(BASE_DIR, "ml", "models", filename)
     if os.path.exists(path):
-        with open(path, "rb") as f:
-            models[key] = pickle.load(f)
+        try:
+            with open(path, "rb") as f:
+                models[key] = pickle.load(f)
+            print(f"Successfully loaded model: {key}")
+        except Exception as e:
+            print(f"Warning: Failed to load model {key}: {e}")
+    else:
+        print(f"Warning: Model file not found: {path}")
 
 from typing import Any
 
