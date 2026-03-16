@@ -86,8 +86,17 @@ def login_google():
             <a href="/login/google/demo" style="color: #00f2ff; text-decoration: none; border: 1px solid #00f2ff; padding: 10px 20px; border-radius: 5px; background: rgba(0,242,255,0.1); font-weight: bold;">Initialize Demo (Bypass)</a>
         </div>
         """, 401
+    # Auto-detect Render URL if placeholder is used or if RENDER_EXTERNAL_URL is available
+    base_url = os.getenv("RENDER_EXTERNAL_URL", request.url_root.rstrip("/"))
     
-    redirect_uri = REDIRECT_URI_OVERRIDE or (request.url_root.rstrip("/") + "/login/google/callback")
+    # If REDIRECT_URI_OVERRIDE is a placeholder or not set, use the detected base_url
+    if not REDIRECT_URI_OVERRIDE or "your-" in REDIRECT_URI_OVERRIDE:
+        redirect_uri = base_url.rstrip("/") + "/login/google/callback"
+        # Ensure it starts with https on Render
+        if "onrender.com" in redirect_uri and not redirect_uri.startswith("https://"):
+            redirect_uri = redirect_uri.replace("http://", "https://")
+    else:
+        redirect_uri = REDIRECT_URI_OVERRIDE
     
     params = {
         "client_id": GOOGLE_CLIENT_ID,
