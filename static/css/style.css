@@ -1,0 +1,19 @@
+/* Global styles for the Healthcare AI system */
+:root {
+    --primary: #00f2ff;
+    --secondary: #7000ff;
+    --bg-dark: #050508;
+}
+
+body {
+    background-color: var(--bg-dark);
+    color: white;
+    margin: 0;
+    padding: 0;
+}
+
+.main-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
