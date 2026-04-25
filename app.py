@@ -6,6 +6,7 @@ sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 # Import the dash app and expose its server for Gunicorn
 from dashboard.app import server
+app = server  # Alias for Gunicorn compatibility (app:app)
 
 if __name__ == "__main__":
     from dashboard.app import app

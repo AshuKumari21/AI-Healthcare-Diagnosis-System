@@ -1,5 +1,21 @@
 services:
-  # Service 1: ML Backend (FastAPI)
+  # Option 1: Unified Service (Recommended - Runs both Frontend & Backend)
+  - type: web
+    name: healthcare-unified
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn run_prod:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHONPATH
+        value: .
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: GMAIL_USER
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false
+
+  # Option 2: ML Backend (FastAPI) - Separate
   - type: web
     name: healthcare-api
     env: python
@@ -8,12 +24,8 @@ services:
     envVars:
       - key: PYTHONPATH
         value: .
-      - key: GMAIL_USER
-        sync: false
-      - key: GMAIL_APP_PASSWORD
-        sync: false
 
-  # Service 2: Frontend Dashboard (Dash)
+  # Option 3: Frontend Dashboard (Dash) - Separate
   - type: web
     name: healthcare-dashboard
     env: python
@@ -27,11 +39,3 @@ services:
           name: healthcare-api
           type: web
           property: url
-      - key: FLASK_SECRET_KEY
-        generateValue: true
-      - key: GOOGLE_CLIENT_ID
-        sync: false
-      - key: GOOGLE_CLIENT_SECRET
-        sync: false
-      - key: REDIRECT_URI
-        sync: false
