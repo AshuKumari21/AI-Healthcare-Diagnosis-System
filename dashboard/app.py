@@ -43,21 +43,49 @@ except Exception as e:
 # Load Google Credentials from Environment
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+# Base URLs for API and Redirects
 REDIRECT_URI_OVERRIDE = os.getenv("REDIRECT_URI")
-API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+# Detect if running in unified mode (API is on same port at /api)
+PORT = os.environ.get("PORT", "8000")
+API_BASE_URL = os.getenv("API_BASE_URL", f"http://127.0.0.1:{PORT}/api")
 
-# Debug Logging
+# Debug Logging Helpers
 is_placeholder = lambda x: not x or "your_client_id" in str(x) or "your_client_secret" in str(x)
-
 def mask_val(val, chars=10):
     if not val or is_placeholder(val): return "[PLACEHOLDER OR MISSING]"
     s = str(val)
     return "[FOUND] " + s[:chars] + "..."  # type: ignore
 
+# Helper to get the correct base URL for redirects and API calls
+def get_base_url():
+    # 1. Check for Render's external URL
+    render_url = os.getenv("RENDER_EXTERNAL_URL")
+    if render_url:
+        return render_url.rstrip("/")
+    
+    # 2. Check for manual override in .env
+    env_uri = os.getenv("REDIRECT_URI")
+    if env_uri and "127.0.0.1" not in env_uri and "localhost" not in env_uri:
+        return env_uri.split("/login")[0].rstrip("/")
+    
+    # 3. Fallback to request root or default localhost
+    try:
+        return request.url_root.rstrip("/")
+    except:
+        return f"http://127.0.0.1:{os.environ.get('PORT', 10000)}"
+
+def get_google_redirect_uri():
+    base = get_base_url()
+    # Ensure HTTPS on Render
+    if "onrender.com" in base and not base.startswith("https://"):
+        base = base.replace("http://", "https://")
+    return f"{base}/login/google/callback"
+
 print("--- OAuth Debug ---")
 print(f"GOOGLE_CLIENT_ID: {mask_val(GOOGLE_CLIENT_ID, 10)}")
 print(f"GOOGLE_CLIENT_SECRET: {mask_val(GOOGLE_CLIENT_SECRET, 5)}")
-print(f"REDIRECT_URI_OVERRIDE: {REDIRECT_URI_OVERRIDE}")
+print(f"DETECTED BASE URL: {get_base_url()}")
+print(f"REDIRECT URI: {get_google_redirect_uri()}")
 print("--------------------")
 
 from urllib.parse import urlencode, quote
@@ -86,17 +114,7 @@ def login_google():
             <a href="/login/google/demo" style="color: #00f2ff; text-decoration: none; border: 1px solid #00f2ff; padding: 10px 20px; border-radius: 5px; background: rgba(0,242,255,0.1); font-weight: bold;">Initialize Demo (Bypass)</a>
         </div>
         """, 401
-    # Auto-detect Render URL if placeholder is used or if RENDER_EXTERNAL_URL is available
-    base_url = os.getenv("RENDER_EXTERNAL_URL", request.url_root.rstrip("/"))
-    
-    # If REDIRECT_URI_OVERRIDE is a placeholder or not set, use the detected base_url
-    if not REDIRECT_URI_OVERRIDE or "your-" in REDIRECT_URI_OVERRIDE:
-        redirect_uri = base_url.rstrip("/") + "/login/google/callback"
-        # Ensure it starts with https on Render
-        if "onrender.com" in redirect_uri and not redirect_uri.startswith("https://"):
-            redirect_uri = redirect_uri.replace("http://", "https://")
-    else:
-        redirect_uri = REDIRECT_URI_OVERRIDE
+    redirect_uri = get_google_redirect_uri()
     
     params = {
         "client_id": GOOGLE_CLIENT_ID,
@@ -124,7 +142,7 @@ def login_google_callback():
     if error or not code:
         return redirect("/login?error=" + str(error))
         
-    redirect_uri = REDIRECT_URI_OVERRIDE or (request.url_root.rstrip("/") + "/login/google/callback")
+    redirect_uri = get_google_redirect_uri()
     token_url = "https://oauth2.googleapis.com/token"
     token_data = {
         "code": code,
