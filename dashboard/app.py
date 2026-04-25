@@ -15,6 +15,10 @@ from datetime import datetime
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from db.database import add_user, get_user, get_user_by_email, add_assessment, get_assessment_history, add_patient_registration, get_all_patient_registrations, delete_patient_registration  # pyre-ignore
 
+# Import Backend Logic for Direct Calling (Avoids Deadlocks on Render)
+from api.main import predict as api_predict, InputData, send_contact_email, ContactRequest
+import asyncio
+
 # Initialize the Dash app
 from flask import redirect, request, session, url_for  # type: ignore
 from dotenv import load_dotenv  # type: ignore
@@ -1392,28 +1396,26 @@ def handle_contact_submission(n_clicks, name, email, subject, message):
             style={"background": "rgba(255,65,54,0.1)", "border": "1px solid rgba(255,65,54,0.3)"}
         )
 
-    # API Call to Backend
+    # DIRECT CALL to Backend Logic (Instead of requests.post to avoid Render timeouts)
     try:
-        payload = {
-            "name": name,
-            "email": email,
-            "subject": subject,
-            "message": message
-        }
-        # Assuming the FastAPI backend is running on port 8000
-        response = requests.post(f"{API_BASE_URL}/contact", json=payload, timeout=10)
-        result = response.json()
-
-        if response.status_code == 200 and result.get("status") == "success":
+        contact_data = ContactRequest(
+            name=name,
+            email=email,
+            subject=subject,
+            message=message
+        )
+        # run async function in sync context
+        result = asyncio.run(send_contact_email(contact_data))
+        
+        if result.get("status") == "success":
             return html.Div(
-                [html.I(className="fa-solid fa-circle-check me-2"), "Message sent successfully! We will get back to you soon."],
+                [html.I(className="fa-solid fa-circle-check me-2"), "Message sent successfully! Our team will contact you soon."],
                 className="text-success small p-2 rounded",
                 style={"background": "rgba(46,204,64,0.1)", "border": "1px solid rgba(46,204,64,0.3)"}
             )
         else:
-            error_msg = result.get("error", "Unknown error occurred.")
             return html.Div(
-                [html.I(className="fa-solid fa-circle-xmark me-2"), f"Failed to send message: {error_msg}"],
+                [html.I(className="fa-solid fa-circle-xmark me-2"), f"Error: {result.get('error', 'Unknown error')}"],
                 className="text-danger small p-2 rounded",
                 style={"background": "rgba(255,65,54,0.1)", "border": "1px solid rgba(255,65,54,0.3)"}
             )
@@ -1643,23 +1645,17 @@ def run_prediction_engine(n, path, feature_values, feature_ids):
             
             conf = "100.0%" # BMI is a deterministic calculation
         else:
-            # API Call with dictionary instead of list
-            resp = requests.post(f"{API_BASE_URL}/predict/{disease_id}", json={"features": feature_dict}, timeout=5)
-            resp.raise_for_status()
-            data = resp.json()
+            # DIRECT CALL to Backend Prediction Logic (Avoids Render timeouts)
+            input_data = InputData(features=feature_dict)
+            result = api_predict(disease_id, input_data)
             
-            # Check for API error
-            if "error" in data:
-                return dash.no_update, "---", "---", "ERR", {}, {}, {}, {}, {}, "ERROR", None, None, None, None, data["error"]
-
-            prob = data.get('probability', 0.0)
-            pred = data.get('prediction', 0)
-            conf = "98.4%" # Model metric
+            if "error" in result:
+                return [html.Div(f"Error: {result['error']}", className="text-danger")] + [dash.no_update]*10
             
-            if disease_id == "diabetes":
-                status_text = "Diabetes Positive" if pred == 1 else "Diabetes Negative"
-            else:
-                status_text = "POSITIVE" if pred == 1 else "NEGATIVE"
+            pred = result["prediction"]
+            prob = result["probability"]
+            status_text = result["status"]
+            conf = f"{prob}%"
         
         # Risk Mapping
         level, color, css = "NORMAL", "#2ecc40", "level-low"
