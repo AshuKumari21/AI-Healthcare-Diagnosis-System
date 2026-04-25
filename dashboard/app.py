@@ -40,22 +40,6 @@ try:
 except Exception as e:
     print(f"--- Database Init Warning: {e} ---")
 
-# Load Google Credentials from Environment
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-# Base URLs for API and Redirects
-REDIRECT_URI_OVERRIDE = os.getenv("REDIRECT_URI")
-# Detect if running in unified mode (API is on same port at /api)
-PORT = os.environ.get("PORT", "8000")
-API_BASE_URL = os.getenv("API_BASE_URL", f"http://127.0.0.1:{PORT}/api")
-
-# Debug Logging Helpers
-is_placeholder = lambda x: not x or "your_client_id" in str(x) or "your_client_secret" in str(x)
-def mask_val(val, chars=10):
-    if not val or is_placeholder(val): return "[PLACEHOLDER OR MISSING]"
-    s = str(val)
-    return "[FOUND] " + s[:chars] + "..."  # type: ignore
-
 # Helper to get the correct base URL for redirects and API calls
 def get_base_url():
     # 1. Check for Render's external URL
@@ -63,16 +47,49 @@ def get_base_url():
     if render_url:
         return render_url.rstrip("/")
     
-    # 2. Check for manual override in .env
+    # 2. Check for manual override in .env (REDIRECT_URI)
     env_uri = os.getenv("REDIRECT_URI")
     if env_uri and "127.0.0.1" not in env_uri and "localhost" not in env_uri:
         return env_uri.split("/login")[0].rstrip("/")
     
     # 3. Fallback to request root or default localhost
     try:
+        from flask import request
         return request.url_root.rstrip("/")
     except:
         return f"http://127.0.0.1:{os.environ.get('PORT', 10000)}"
+
+def get_api_base_url():
+    # If explicitly set in .env, use that
+    env_api = os.getenv("API_BASE_URL")
+    if env_api:
+        return env_api.rstrip("/")
+    
+    # On Render, use the public URL to avoid single-worker deadlock (127.0.0.1 can timeout)
+    # Locally, we use 127.0.0.1 with the correct port
+    base = get_base_url()
+    if "onrender.com" in base:
+        # Ensure HTTPS for external calls
+        if not base.startswith("https://"):
+            base = base.replace("http://", "https://")
+        return f"{base}/api"
+    
+    # Local fallback
+    port = os.environ.get("PORT", "10000")
+    return f"http://127.0.0.1:{port}/api"
+
+# Initialize Base URLs
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+REDIRECT_URI_OVERRIDE = os.getenv("REDIRECT_URI")
+API_BASE_URL = get_api_base_url()
+
+# Debug Logging Helpers
+is_placeholder = lambda x: not x or "your_client_id" in str(x) or "your_client_secret" in str(x)
+def mask_val(val, chars=10):
+    if not val or is_placeholder(val): return "[PLACEHOLDER OR MISSING]"
+    s = str(val)
+    return "[FOUND] " + s[:chars] + "..."  # type: ignore
 
 def get_google_redirect_uri():
     base = get_base_url()
