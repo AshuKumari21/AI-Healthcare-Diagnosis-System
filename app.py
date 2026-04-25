@@ -10,4 +10,4 @@ from dashboard.app import server
 if __name__ == "__main__":
     from dashboard.app import app
     port = int(os.environ.get("PORT", 10000))
-    app.run_server(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port)
