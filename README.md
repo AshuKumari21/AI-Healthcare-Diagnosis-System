@@ -2,6 +2,11 @@
 
 # 🩺 Aegis AI | Clinical Intelligence & Multi-Disease Diagnostic System
 
+### 🌐 [Click Here to Open Live Application](https://ai-healthcare-diagnosis-system-3.onrender.com/)
+
+[![Live Deployment](https://img.shields.io/badge/Live_Demo-Render_Cloud-00f2ff?style=for-the-badge&logo=render&logoColor=white)](https://ai-healthcare-diagnosis-system-3.onrender.com/)
+[![Instant Demo Login](https://img.shields.io/badge/Instant_Demo-Bypass_Auth-00e676?style=for-the-badge&logo=fastapi&logoColor=white)](https://ai-healthcare-diagnosis-system-3.onrender.com/login/google/demo)
+
 [![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com/)
 [![Plotly Dash](https://img.shields.io/badge/Plotly_Dash-008DE4?style=for-the-badge&logo=plotly&logoColor=white)](https://dash.plotly.com/)
@@ -14,6 +19,10 @@
   <b>Enterprise AI healthcare diagnosis platform featuring disease-agnostic Clinical NLP parameter extraction, Explainable AI (SHAP) feature attribution, and predictive intelligence across 9 major pathological conditions.</b>
 </p>
 
+> 🔗 **Live Production URL:** **[https://ai-healthcare-diagnosis-system-3.onrender.com/](https://ai-healthcare-diagnosis-system-3.onrender.com/)**  
+> ⚡ **Direct Sandbox Access:** **[https://ai-healthcare-diagnosis-system-3.onrender.com/login/google/demo](https://ai-healthcare-diagnosis-system-3.onrender.com/login/google/demo)**
+
+[Live Demo](#-live-deployment) •
 [Key Features](#-key-features) •
 [Architecture](#-system-architecture) •
 [Disease Models](#-supported-disease-modules) •
@@ -23,6 +32,15 @@
 [API Reference](#-rest-api-reference)
 
 </div>
+
+---
+
+## 🌐 Live Deployment
+
+The platform is deployed and fully operational on Render Cloud:
+- **Live Dashboard**: [https://ai-healthcare-diagnosis-system-3.onrender.com/](https://ai-healthcare-diagnosis-system-3.onrender.com/)
+- **Instant Demo Mode**: [https://ai-healthcare-diagnosis-system-3.onrender.com/login/google/demo](https://ai-healthcare-diagnosis-system-3.onrender.com/login/google/demo) *(One-click sandbox access to evaluate all 9 diagnostic modules without Google OAuth)*
+- **Interactive API Documentation (Swagger)**: [https://ai-healthcare-diagnosis-system-3.onrender.com/docs](https://ai-healthcare-diagnosis-system-3.onrender.com/docs)
 
 ---
 
