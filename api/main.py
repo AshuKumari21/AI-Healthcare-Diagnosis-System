@@ -56,6 +56,8 @@ for key, filename in MODEL_PATHS.items():
         print(f"Warning: Model file not found: {path}")
 
 from typing import Any
+from ml.nlp import parse_clinical_text, get_ai_response, map_vitals_to_feature_value
+from ml.xai.explainer import explain_prediction
 
 # input schema
 class InputData(BaseModel):
@@ -67,13 +69,28 @@ class ContactRequest(BaseModel):
     subject: str
     message: str
 
+class ClinicalNotesRequest(BaseModel):
+    notes: str
+
+class ChatQueryRequest(BaseModel):
+    query: str
+
 @app.get("/")
 def home():
     return {
         "status": "online",
         "models_loaded": list(models.keys()),
+        "nlp_engine": "active",
         "message": "Healthcare ML API running successfully"
     }
+
+@app.post("/nlp/parse-notes")
+def api_parse_notes(request: ClinicalNotesRequest):
+    return parse_clinical_text(request.notes)
+
+@app.post("/nlp/chat")
+def api_chat(request: ChatQueryRequest):
+    return get_ai_response(request.query)
 
 @app.post("/predict/{disease}")
 def predict(disease: str, data: InputData):
@@ -102,11 +119,13 @@ def predict(disease: str, data: InputData):
     final_features = []
 
     if isinstance(input_features, dict) and expected_names:
-        # Create a lowercase mapping of input features for case-insensitive lookup
-        input_lower = {str(k).lower(): v for k, v in input_features.items()}
-        # If we have names, map them correctly
+        # Use intelligent feature mapping to align parameters across disease models
         for name in expected_names:
-            final_features.append(input_lower.get(name.lower(), 0.0))
+            val = map_vitals_to_feature_value(name, input_features, 0.0)
+            try:
+                final_features.append(float(val) if val is not None else 0.0)
+            except (ValueError, TypeError):
+                final_features.append(0.0)
     else:
         # If we have a list, pad or truncate
         current_features = list(input_features)
@@ -127,16 +146,44 @@ def predict(disease: str, data: InputData):
         if hasattr(model, "predict_proba"):
             probability = float(model.predict_proba(features_array)[0][1] * 100)
         
+        # Compute SHAP explanation (gracefully handled so prediction never fails)
+        explanation = None
+        status_text = "High Risk" if prediction == 1 or probability > 70 else ("Medium Risk" if probability > 30 else "Low Risk")
+        try:
+            explanation = explain_prediction(
+                disease_id=disease,
+                model=model,
+                raw_features=input_features,
+                features_array=features_array,
+                prediction=prediction,
+                probability=round(probability, 2),
+                status=status_text
+            )
+        except Exception as xai_err:
+            print(f"XAI warning for {disease}: {xai_err}")
+
         return {
             "disease": disease,
             "prediction": prediction,
             "probability": round(probability, 2),  # pyre-ignore
-            "status": "High Risk" if prediction == 1 or probability > 70 else ("Medium Risk" if probability > 30 else "Low Risk"),
+            "status": status_text,
             "features_used": expected_features,
-            "mapping_status": "named" if isinstance(input_features, dict) else "positional"
+            "mapping_status": "named" if isinstance(input_features, dict) else "positional",
+            "explanation": explanation
         }
     except Exception as e:
         return {"error": f"Prediction failed: {str(e)}"}
+
+@app.post("/explain/{disease}")
+def explain(disease: str, data: InputData):
+    """
+    Dedicated Explainable AI (XAI) endpoint returning SHAP feature attribution
+    and clinical explanation narrative.
+    """
+    res = predict(disease, data)
+    if "error" in res:
+        return res
+    return res.get("explanation", {"error": "Explanation unavailable"})
 
 @app.post("/contact")
 async def send_contact_email(request: ContactRequest):

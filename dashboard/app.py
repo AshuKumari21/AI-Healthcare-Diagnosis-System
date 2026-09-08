@@ -14,9 +14,20 @@ from datetime import datetime
 # Import DB functions
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from db.database import add_user, get_user, get_user_by_email, add_assessment, get_assessment_history, add_patient_registration, get_all_patient_registrations, delete_patient_registration  # pyre-ignore
+from ml.nlp import parse_clinical_text, get_ai_response  # pyre-ignore
+from ml.nlp.patient_analytics import (  # pyre-ignore
+    REFERENCE_RANGES,
+    evaluate_metric_status,
+    create_vital_comparison_figure,
+    create_feature_contribution_figure,
+    create_cohort_distribution_figure,
+    create_cohort_correlation_figure
+)
 
 # Import Backend Logic for Direct Calling (Avoids Deadlocks on Render)
-from api.main import predict as api_predict, InputData, send_contact_email, ContactRequest
+from api.main import predict as api_predict, InputData, send_contact_email, ContactRequest, models
+from ml.xai.explainer import explain_prediction
+from ml.xai.visualizer import create_shap_figure, build_why_prediction_ui
 import asyncio
 
 # Initialize the Dash app
@@ -318,6 +329,22 @@ DISEASES = [
     {"id": "liver", "label": "Liver Disease", "icon": "fa-solid fa-vial-circle-check", "desc": "Hepatic screen for enzyme pathways.", "features": [{"id": "Age", "label": "Age", "range": "1-100", "default": 50}, {"id": "Total_Bilirubin", "label": "Bilirubin", "range": "0.1-10", "default": 1.0}]},
     {"id": "anemia", "label": "Anemia", "icon": "fa-solid fa-droplet", "desc": "Hematological oxygen-carrying capacity.", "features": [{"id": "Hemoglobin", "label": "Hemoglobin", "range": "5-20", "default": 12}]},
     {"id": "obesity", "label": "Obesity", "icon": "fa-solid fa-person", "desc": "Systemic body-mass/metabolic index.", "features": [{"id": "Age", "label": "Age", "range": "1-100", "default": 30}, {"id": "Height", "label": "Height (cm)", "range": "100-220", "default": 170}, {"id": "Weight", "label": "Weight (kg)", "range": "20-200", "default": 70}]},
+    {
+        "id": "bp", "label": "Hypertension / BP", "icon": "fa-solid fa-heart-pulse", "desc": "Arterial pressure & cardiovascular risk profile.",
+        "features": [
+            {"id": "age", "label": "Age", "range": "18-100 years", "default": 50},
+            {"id": "sex", "label": "Sex (1=M, 0=F)", "range": "0 or 1", "default": 1},
+            {"id": "bmi", "label": "BMI", "range": "15-50", "default": 25.0},
+            {"id": "systolic", "label": "Systolic BP", "range": "90-200 mmHg", "default": 120},
+            {"id": "diastolic", "label": "Diastolic BP", "range": "60-120 mmHg", "default": 80},
+            {"id": "pulse", "label": "Pulse Rate", "range": "50-150 bpm", "default": 72},
+            {"id": "cholesterol", "label": "Cholesterol (1-3)", "range": "1=Norm, 2=Border, 3=High", "default": 1},
+            {"id": "glucose", "label": "Glucose (1-3)", "range": "1=Norm, 2=Border, 3=High", "default": 1},
+            {"id": "smoke", "label": "Smoking (0 or 1)", "range": "0 or 1", "default": 0},
+            {"id": "alcohol", "label": "Alcohol (0 or 1)", "range": "0 or 1", "default": 0},
+            {"id": "active", "label": "Physical Activity", "range": "0 or 1", "default": 1},
+        ]
+    },
     {"id": "general_health", "label": "General Health", "icon": "fa-solid fa-shield-heart", "desc": "Systemic multi-factor wellness screen.", "features": [{"id": "Age", "label": "Age", "range": "1-100", "default": 40}]},
 ]
 
@@ -597,6 +624,36 @@ def central_dashboard(user_data):
         ])
     ])
 
+def build_health_metrics_table(feature_dict: dict):
+    rows = []
+    for k, val in feature_dict.items():
+        if k in REFERENCE_RANGES and float(val) > 0:
+            eval_res = evaluate_metric_status(k, val)
+            rows.append(
+                html.Tr([
+                    html.Td([html.Strong(eval_res["label"], className="text-white"), html.Span(f" ({k})", className="text-muted small")]),
+                    html.Td(f"{val} {eval_res.get('unit', '')}", className="fw-bold text-info"),
+                    html.Td(eval_res["ref_text"], className="text-muted small"),
+                    html.Td(dbc.Badge(eval_res["status"], color=eval_res["badge"], pill=True, className="fw-semibold px-2 py-1")),
+                ])
+            )
+
+    if not rows:
+        return html.Div(
+            "Additional patient data is required for this analysis. Enter or extract clinical values above to generate the metrics overview.",
+            className="text-muted small py-3 text-center"
+        )
+
+    return dbc.Table([
+        html.Thead(html.Tr([
+            html.Th("Clinical Parameter", className="text-muted small"),
+            html.Th("Patient Value", className="text-muted small"),
+            html.Th("Standard Reference Range", className="text-muted small"),
+            html.Th("Evaluation Status", className="text-muted small")
+        ])),
+        html.Tbody(rows)
+    ], responsive=True, hover=True, className="mb-0 align-middle table-borderless")
+
 def analysis_page(disease_id, user_data):
     # This remains the same high-detail analysis page
     disease_info = next((d for d in DISEASES if d['id'] == disease_id), DISEASES[0])
@@ -619,6 +676,58 @@ def analysis_page(disease_id, user_data):
         dbc.Row([
             dbc.Col([
                 html.Div(className="glass-panel scroll-y", children=[
+                    # Patient Information Section
+                    html.Div(className="p-3 mb-4 rounded-3", style={
+                        "background": "rgba(255, 255, 255, 0.02)",
+                        "border": "1px solid rgba(255, 255, 255, 0.1)",
+                        "borderRadius": "10px"
+                    }, children=[
+                        html.H6("Patient Information", className="text-white fw-bold mb-1", style={"fontSize": "0.95rem"}),
+                        html.P("Enter relevant patient information to automatically extract available parameters.", className="text-muted mb-2", style={"fontSize": "0.78rem"}),
+                        
+                        dbc.Textarea(
+                            id="nlp-raw-notes",
+                            placeholder="Enter patient information here...",
+                            className="premium-input mb-2 w-100",
+                            rows=6,
+                            style={
+                                "fontSize": "0.85rem",
+                                "lineHeight": "1.45",
+                                "padding": "10px 12px",
+                                "resize": "vertical",
+                                "minHeight": "130px",
+                                "background": "rgba(0, 0, 0, 0.35)",
+                                "border": "1px solid rgba(255, 255, 255, 0.15)",
+                                "borderRadius": "8px",
+                                "color": "#f1f5f9"
+                            }
+                        ),
+                        
+                        html.P(
+                            "The system will analyze the provided information and extract relevant patient parameters for assessment.",
+                            className="text-muted mb-3",
+                            style={"fontSize": "0.74rem", "lineHeight": "1.35"}
+                        ),
+                        
+                        html.Div(className="d-flex justify-content-end", children=[
+                            dbc.Button(
+                                "Extract Patient Information",
+                                id="nlp-extract-btn",
+                                size="sm",
+                                className="px-3 py-1 fw-semibold",
+                                style={
+                                    "background": "rgba(0, 242, 255, 0.15)",
+                                    "border": "1px solid rgba(0, 242, 255, 0.6)",
+                                    "color": "#00f2ff",
+                                    "borderRadius": "6px",
+                                    "fontSize": "0.8rem"
+                                }
+                            )
+                        ]),
+                        
+                        html.Div(id="nlp-extract-feedback", className="mt-2")
+                    ]),
+
                     html.H5([html.I(className="bi bi-person-circle me-2 text-info"), "Patient Parameters"], className="mb-4"),
                     
                     html.Div([
@@ -628,8 +737,8 @@ def analysis_page(disease_id, user_data):
                     
                     html.Hr(className="border-secondary opacity-25 my-4"),
                     
-                    html.Label("Clinical Notes", className="text-muted small mb-2"),
-                    dbc.Textarea(id="clinical-notes", placeholder="Enter observations for medical report...", className="premium-input border-0 mb-4", rows=3),
+                    html.Label("Clinical Notes & Symptoms", className="text-muted small mb-2"),
+                    dbc.Textarea(id="clinical-notes", placeholder="Enter observations or let NLP populate findings...", className="premium-input border-0 mb-4", rows=3),
                     
                     dbc.Button([
                         html.I(className="bi bi-activity me-2"),
@@ -729,6 +838,84 @@ def analysis_page(disease_id, user_data):
                                 html.Div(id="score-label", className="fw-bold text-info mt-2")
                             ])
                         ], lg=3)
+                    ], className="mb-4"),
+
+                    # ── Patient Analytics Section ──────────────────────────────────
+                    html.Div(className="mt-4 pt-2", children=[
+                        html.Div(className="d-flex align-items-center justify-content-between mb-4", children=[
+                            html.Div(className="d-flex align-items-center gap-3", children=[
+                                html.Div(style={"width": "4px", "height": "32px", "borderRadius": "3px", "background": "linear-gradient(180deg, #00f2ff, #7000ff)"}),
+                                html.Div([
+                                    html.H4("Patient Analytics", className="text-white fw-bold mb-0"),
+                                    html.P("Comprehensive biometric profiling, feature attribution, and population insights", className="text-muted small mb-0")
+                                ])
+                            ]),
+                            dbc.Badge("Decision Support Suite", color="info", pill=True, className="px-3 py-2 fw-semibold small")
+                        ]),
+
+                        # 1. Health Metrics Overview
+                        html.Div(className="glass-panel p-4 mb-4", children=[
+                            html.Div(className="d-flex justify-content-between align-items-center mb-3", children=[
+                                html.H6([html.I(className="fa-solid fa-heart-pulse text-info me-2"), "Health Metrics Overview"], className="text-white fw-bold mb-0"),
+                                html.Span("Comparison with Medically Defined Reference Standards", className="text-muted small")
+                            ]),
+                            html.Div(id="health-metrics-overview"),
+                            html.Div(className="mt-3 p-2 rounded", style={"background": "rgba(255, 255, 255, 0.02)", "border": "1px solid rgba(255, 255, 255, 0.06)"}, children=[
+                                html.Small([
+                                    html.I(className="fa-solid fa-circle-info text-info me-1"),
+                                    html.Strong("Clinical Decision Support Notice: "),
+                                    "These evaluations compare recorded values against established clinical reference guidelines (ADA, AHA, WHO). This analysis serves as decision-support guidance and does not replace certified clinical diagnosis."
+                                ], className="text-muted", style={"fontSize": "0.75rem"})
+                            ])
+                        ]),
+
+                        # 2. Risk Factor Analysis & 3. Feature Contribution / SHAP
+                        dbc.Row(className="g-4 mb-4", children=[
+                            dbc.Col([
+                                html.Div(className="glass-panel p-4 h-100", children=[
+                                    html.H6([html.I(className="fa-solid fa-chart-column text-info me-2"), "Risk Factor Analysis (Vital Comparison)"], className="text-white fw-bold mb-2"),
+                                    html.P("Relative index of patient vitals compared to upper clinical reference boundaries (100%)", className="text-muted small mb-3"),
+                                    dcc.Graph(id="vital-comparison-graph", config={'responsive': True, 'displayModeBar': False}, style={"height": "320px"})
+                                ])
+                            ], lg=6),
+                            dbc.Col([
+                                html.Div(className="glass-panel p-4 h-100", children=[
+                                    html.H6([html.I(className="fa-solid fa-brain text-info me-2"), "SHAP Feature Attribution (Explainable AI)"], className="text-white fw-bold mb-2"),
+                                    html.P("Individual biometric contributions (Red = Increases Risk, Green = Mitigates Risk)", className="text-muted small mb-3"),
+                                    dcc.Graph(id="shap-contribution-graph", config={'responsive': True, 'displayModeBar': False}, style={"height": "320px"})
+                                ])
+                            ], lg=6),
+                        ]),
+
+                        # 3. Why This Prediction? (SHAP Explainable AI)
+                        html.Div(className="glass-panel p-4 mb-4", children=[
+                            html.Div(className="d-flex justify-content-between align-items-center mb-3", children=[
+                                html.Div([
+                                    html.H6([html.I(className="fa-solid fa-magnifying-glass-chart text-info me-2"), "Why This Prediction? (SHAP Explainability)"], className="text-white fw-bold mb-1"),
+                                    html.P("Decomposing individual biometric impact with exact Shapley values and dynamic clinical rationale", className="text-muted small mb-0")
+                                ]),
+                                dbc.Badge("Explainable AI (XAI)", color="info", pill=True, className="px-3 py-1 fw-semibold small")
+                            ]),
+                            html.Div(id="why-prediction-details")
+                        ]),
+
+                        # 4. Additional Analytics (Cohort / Population Intelligence)
+                        html.Div(className="glass-panel p-4", children=[
+                            html.Div(className="d-flex justify-content-between align-items-center mb-3", children=[
+                                html.H6([html.I(className="fa-solid fa-users text-info me-2"), "Additional Analytics (Cohort Population Data)"], className="text-white fw-bold mb-0"),
+                                html.Span("Real-time registry statistics from database records", className="text-muted small")
+                            ]),
+                            dbc.Row(className="g-4", children=[
+                                dbc.Col([
+                                    html.Small("Cohort Disease & Risk Distribution", className="text-muted fw-semibold d-block mb-2"),
+                                    dcc.Graph(id="cohort-dist-graph", config={'responsive': True, 'displayModeBar': False}, style={"height": "260px"})
+                                ], lg=6),
+                                dbc.Col([
+                                    html.Small("Age & Track Correlation Map", className="text-muted fw-semibold d-block mb-2"),
+                                    dcc.Graph(id="cohort-corr-graph", config={'responsive': True, 'displayModeBar': False}, style={"height": "260px"})
+                                ], lg=6),
+                            ])
+                        ])
                     ])
                 ]), color="info", type="border", size="lg")
             ], lg=9)
@@ -1521,38 +1708,15 @@ def toggle_chat(n1, n2, style):
     prevent_initial_call=True
 )
 def handle_chat(n_clicks, n_submit, user_text, history):
-    if not user_text:
+    if not user_text or not user_text.strip():
         return dash.no_update, dash.no_update, dash.no_update
     
     # Add user message
     history.append({"role": "user", "text": user_text})
     
-    # Simple AI Response Logic
-    query = user_text.lower()
-    if any(w in query for w in ["hello", "hi", "hey", "greetings"]):
-        response = "Hello! I am Aegis, your clinical intelligence assistant. You can ask me about different health conditions, symptoms, or how to use the dashboard."
-    elif "heart" in query or "chest" in query or "cardio" in query:
-        response = "For cardiovascular analysis, please use our **[Heart Disease Module](/analysis/heart)**. It analyzes factors like resting BP, cholesterol, and maximum heart rate."
-    elif "stroke" in query or "brain" in query or "paralysis" in query:
-        response = "To assess cerebrovascular risk, please visit the **[Stroke Module](/analysis/stroke)**. It evaluates factors such as hypertension, average glucose, and BMI."
-    elif "diabet" in query or "sugar" in query or "glucose" in query or "thirsty" in query:
-        response = "For metabolic screening, please navigate to our **[Diabetes Module](/analysis/diabetes)**. It requires inputs like glucose levels, insulin, and BMI."
-    elif "kidney" in query or "renal" in query or "urine" in query:
-        response = "To check renal function, please use the **[Kidney Disease Module](/analysis/kidney)**."
-    elif "liver" in query or "hepatic" in query or "jaundice" in query:
-        response = "For hepatic screening, please visit our **[Liver Disease Module](/analysis/liver)**."
-    elif "anemia" in query or "blood" in query or "tired" in query or "fatigue" in query or "weak" in query or "exhaust" in query:
-        response = "Symptoms like fatigue and weakness could indicate low oxygen-carrying capacity. Please use the **[Anemia Module](/analysis/anemia)** or the **[General Health Module](/analysis/general_health)** for a broader screen."
-    elif "obes" in query or "weight" in query or "fat" in query:
-        response = "For systemic body-mass assessment, please check the **[Obesity Module](/analysis/obesity)**."
-    elif "risk" in query:
-        response = "The Risk Probability is calculated using a neural ensemble. Anything above 70% suggests a high-priority pathology."
-    elif "report" in query or "download" in query:
-        response = "You can generate a clinical report by clicking the **Generate Medical Report** button on any analysis page."
-    elif "how" in query or "use" in query or "help" in query:
-        response = "1. Select a disease module from the dashboard.\n2. Enter patient vitals.\n3. Click 'Analyze Clinical Data' for AI inference."
-    else:
-        response = "I've logged your query. As an AI health assistant, I recommend checking the diagnostic meters on our specialized modules for precise data. If you have specific symptoms, mention them (e.g., 'heart', 'sugar', 'tired', 'stroke') and I'll guide you."
+    # Advanced NLP Assistant Response
+    ai_result = get_ai_response(user_text)
+    response = ai_result.get("response", "Clinical guidance available on specialized modules.")
         
     history.append({"role": "ai", "text": response})
     
@@ -1565,6 +1729,181 @@ def handle_chat(n_clicks, n_submit, user_text, history):
         
     return messages, "", history
 
+# --- Universal NLP Vitals Mapping Helper ---
+def map_vitals_to_feature_value(field_id: str, vitals: dict, old_val=None):
+    """
+    Intelligently maps extracted clinical NLP vitals to any disease model feature.
+    Works across Diabetes, Heart, Stroke, Kidney, Liver, Anemia, BP, Obesity, and General Health.
+    """
+    f_lower = field_id.lower()
+    v_lower = {str(k).lower(): v for k, v in vitals.items()}
+
+    # Exact key match
+    if field_id in vitals:
+        return vitals[field_id]
+    if f_lower in v_lower:
+        return v_lower[f_lower]
+
+    # Age
+    if f_lower == "age":
+        return v_lower.get("age", old_val)
+
+    # Sex / Gender
+    if f_lower in ["sex", "gender"]:
+        return v_lower.get("sex", v_lower.get("gender", old_val))
+
+    # Blood Pressure mappings
+    if f_lower in ["trestbps", "systolic", "systolic_bp"]:
+        return v_lower.get("trestbps", v_lower.get("systolic_bp", v_lower.get("bloodpressure", old_val)))
+    if f_lower in ["diastolic", "diastolic_bp"]:
+        return v_lower.get("diastolic_bp", v_lower.get("bloodpressure", v_lower.get("bp", old_val)))
+    if f_lower in ["bloodpressure", "bp"]:
+        return v_lower.get("bloodpressure", v_lower.get("diastolic_bp", v_lower.get("trestbps", v_lower.get("bp", old_val))))
+
+    # Glucose mappings
+    if f_lower in ["glucose", "avg_glucose_level"]:
+        val = v_lower.get("glucose", v_lower.get("avg_glucose_level"))
+        if val is not None:
+            if f_lower == "glucose" and old_val in [1, 2, 3]:
+                return 1 if val < 100 else (2 if val < 126 else 3)
+            return val
+        return old_val
+
+    # Cholesterol mappings
+    if f_lower in ["chol", "cholesterol"]:
+        val = v_lower.get("chol", v_lower.get("cholesterol"))
+        if val is not None:
+            if f_lower == "cholesterol" and old_val in [1, 2, 3]:
+                return 1 if val < 200 else (2 if val < 240 else 3)
+            return val
+        return old_val
+
+    # Pulse / Heart Rate mappings
+    if f_lower in ["pulse", "thalach", "heartrate"]:
+        return v_lower.get("thalach", v_lower.get("heartrate", v_lower.get("pulse", old_val)))
+
+    # BMI / Height / Weight
+    if f_lower == "bmi":
+        return v_lower.get("bmi", old_val)
+    if f_lower == "height":
+        return v_lower.get("height", old_val)
+    if f_lower == "weight":
+        return v_lower.get("weight", old_val)
+
+    # Diabetes specific
+    if f_lower == "pregnancies":
+        return v_lower.get("pregnancies", old_val)
+    if f_lower == "skinthickness":
+        return v_lower.get("skinthickness", old_val)
+    if f_lower == "insulin":
+        return v_lower.get("insulin", old_val)
+    if f_lower == "diabetespedigreefunction":
+        return v_lower.get("diabetespedigreefunction", old_val)
+
+    # Stroke / Cardiovascular history
+    if f_lower == "hypertension":
+        return v_lower.get("hypertension", old_val)
+    if f_lower == "heart_disease":
+        return v_lower.get("heart_disease", old_val)
+    if f_lower == "ever_married":
+        return v_lower.get("ever_married", old_val)
+    if f_lower == "residence_type":
+        return v_lower.get("residence_type", old_val)
+    if f_lower == "smoking_status":
+        return v_lower.get("smoking_status", old_val)
+    if f_lower == "smoke":
+        smk = v_lower.get("smoking_status", v_lower.get("smoke"))
+        if smk is not None:
+            return 1 if smk > 0 else 0
+        return old_val
+    if f_lower == "alcohol":
+        return v_lower.get("alcohol", old_val)
+    if f_lower == "active":
+        return v_lower.get("active", old_val)
+
+    # Heart exam specifics
+    if f_lower == "cp":
+        return v_lower.get("cp", old_val)
+    if f_lower == "fbs":
+        return v_lower.get("fbs", old_val)
+    if f_lower == "exang":
+        return v_lower.get("exang", old_val)
+    if f_lower == "oldpeak":
+        return v_lower.get("oldpeak", old_val)
+    if f_lower == "ca":
+        return v_lower.get("ca", old_val)
+
+    # Liver & Anemia
+    if f_lower in ["total_bilirubin", "bilirubin"]:
+        return v_lower.get("total_bilirubin", v_lower.get("bilirubin", old_val))
+    if f_lower in ["hemoglobin", "hb"]:
+        return v_lower.get("hemoglobin", v_lower.get("hb", old_val))
+
+    return old_val
+
+# --- Clinical NLP Auto-Fill Callback ---
+@app.callback(
+    [Output({'type': 'feature-input', 'id': ALL}, 'value'),
+     Output('nlp-extract-feedback', 'children'),
+     Output('clinical-notes', 'value')],
+    [Input('nlp-extract-btn', 'n_clicks')],
+    [State('nlp-raw-notes', 'value'),
+     State({'type': 'feature-input', 'id': ALL}, 'id'),
+     State({'type': 'feature-input', 'id': ALL}, 'value'),
+     State('clinical-notes', 'value')],
+    prevent_initial_call=True
+)
+def extract_vitals_from_notes(n_clicks, raw_notes, feature_ids, current_values, existing_notes):
+    if not raw_notes or not raw_notes.strip():
+        feedback = dbc.Alert([html.I(className="fa-solid fa-triangle-exclamation me-2"), "Please enter patient information first."], color="warning", className="py-2 px-3 small mb-0")
+        return current_values, feedback, existing_notes
+
+    parsed = parse_clinical_text(raw_notes)
+    if not parsed.get("success"):
+        feedback = dbc.Alert("Failed to parse patient information.", color="danger", className="py-2 px-3 small mb-0")
+        return current_values, feedback, existing_notes
+
+    vitals = parsed.get("vitals", {})
+    triage = parsed.get("triage", {})
+    narrative = parsed.get("clinical_narrative", "")
+    
+    # Map extracted vitals to each feature input
+    updated_values = []
+    extracted_features = []
+
+    for f_obj, old_val in zip(feature_ids, current_values):
+        field_id = f_obj['id']
+        matched_val = map_vitals_to_feature_value(field_id, vitals, old_val=old_val)
+        if matched_val is not None and matched_val != old_val:
+            updated_values.append(matched_val)
+            extracted_features.append(f"{field_id}: {matched_val}")
+        else:
+            updated_values.append(old_val)
+
+    populated_count = len(extracted_features)
+
+    # Build triage alert UI
+    alerts_list = [html.Li(a, className="small text-muted") for a in triage.get("alerts", [])]
+    feedback = html.Div([
+        html.Div(className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2 pb-2 border-bottom border-secondary border-opacity-25", children=[
+            dbc.Badge(f"Triage: {triage.get('severity')}", color=triage.get("badge_class", "info"), pill=True, className="fw-semibold px-2 py-1", style={"fontSize": "0.75rem", "whiteSpace": "normal", "textAlign": "left"}),
+            html.Span(f"✓ {populated_count} Parameters Extracted", className="text-info fw-semibold ms-auto", style={"fontSize": "0.75rem", "whiteSpace": "nowrap"})
+        ]),
+        html.P(triage.get("action_plan"), className="text-muted mb-2", style={"fontSize": "0.78rem", "lineHeight": "1.35"}),
+        html.Ul(alerts_list, className="mb-0 ps-3", style={"fontSize": "0.75rem", "color": "#cbd5e1"})
+    ], className="p-3 rounded-2 mt-3", style={
+        "background": "rgba(255, 255, 255, 0.03)",
+        "border": "1px solid rgba(255, 255, 255, 0.08)",
+        "borderLeft": f"3px solid {triage.get('color', '#00f2ff')}"
+    })
+
+    # Combine narrative into notes
+    new_notes = narrative
+    if existing_notes and existing_notes.strip():
+        new_notes = f"{existing_notes}\n[NLP Extraction]: {narrative}"
+
+    return updated_values, feedback, new_notes
+
 @app.callback(
     Output("usage-modal", "is_open"),
     [Input("usage-features-btn", "n_clicks")],
@@ -1576,7 +1915,7 @@ def toggle_usage_modal(n, is_open):
     return is_open
 
 
-# --- Prediction Engine ---
+# --- Prediction & Patient Analytics Engine ---
 @app.callback(
     [Output("risk-pill-container", "children"),
      Output("confidence-score", "children"),
@@ -1592,34 +1931,67 @@ def toggle_usage_modal(n, is_open):
      Output("rec-action", "children"),
      Output("rec-alert", "children"),
      Output("rec-lifestyle", "children"),
+     Output("health-metrics-overview", "children"),
+     Output("vital-comparison-graph", "figure"),
+     Output("shap-contribution-graph", "figure"),
+     Output("cohort-dist-graph", "figure"),
+     Output("cohort-corr-graph", "figure"),
+     Output("why-prediction-details", "children"),
      Output("error-msg", "children")],
-    Input("predict-btn", "n_clicks"),
+    [Input("predict-btn", "n_clicks"),
+     Input("nlp-extract-btn", "n_clicks")],
     [State("url", "pathname"),
      State({'type': 'feature-input', 'id': ALL}, 'value'),
-     State({'type': 'feature-input', 'id': ALL}, 'id')],
+     State({'type': 'feature-input', 'id': ALL}, 'id'),
+     State('nlp-raw-notes', 'value')],
 )
-def run_prediction_engine(n, path, feature_values, feature_ids):
+def run_prediction_engine(n_predict, n_extract, path, feature_values, feature_ids, raw_notes):
     # Safe float conversion
     def safe_float(v):
         try: return float(v) if v is not None else 0.0
         except: return 0.0
 
-    # Empty state for initial load
-    if not n or n == 0:
+    disease_id = path.split('/')[-1] if path and '/analysis/' in path else "diabetes"
+    feature_dict: dict[str, float] = {str(f_id['id']): safe_float(val) for f_id, val in zip(feature_ids, feature_values)}
+    
+    # Check if triggered by NLP extraction to instantly integrate newly extracted parameters
+    ctx = dash.callback_context
+    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else ""
+
+    if triggered_id == "nlp-extract-btn" and raw_notes:
+        parsed = parse_clinical_text(raw_notes)
+        if parsed.get("success"):
+            vitals = parsed.get("vitals", {})
+            for k in list(feature_dict.keys()):
+                val = map_vitals_to_feature_value(k, vitals, old_val=feature_dict[k])
+                if val is not None:
+                    feature_dict[k] = safe_float(val)
+
+    # Load patient registrations for real cohort distribution
+    patients_list = get_all_patient_registrations()
+    patient_age = safe_float(feature_dict.get("age", feature_dict.get("Age", 52.0)))
+    if patient_age <= 0:
+        patient_age = 52.0
+    fig_cohort_dist = create_cohort_distribution_figure(patients_list, disease_id=disease_id)
+    fig_cohort_corr = create_cohort_correlation_figure(patients_list, disease_id=disease_id, current_age=patient_age)
+
+    # Initial state when neither analyze nor extract button was clicked
+    if (not n_predict or n_predict == 0) and (not n_extract or n_extract == 0):
         empty_fig = go.Figure().update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', 
                                              xaxis=dict(visible=False), yaxis=dict(visible=False))
         empty_gauge = go.Figure(go.Indicator(mode="gauge+number", value=0, gauge={'axis': {'range': [0, 100]}, 'bar': {'color': "#222"}}))
         empty_gauge.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color="#444")
+        
+        table_overview = build_health_metrics_table(feature_dict)
+        fig_vital_comp = create_vital_comparison_figure(feature_dict)
+        fig_shap = create_shap_figure(None)
+        why_xai_ui = build_why_prediction_ui(None, disease_id=disease_id)
+
         return (html.Span("AWAITING ANALYSIS", className="risk-header-pill level-low", style={"color": "#64748b", "background": "rgba(255,255,255,0.05)"}),
                 "0.0%", "0.0%", "IDLE", empty_gauge, empty_fig, empty_fig, empty_fig, empty_gauge, "---",
-                html.P("Enter patient data and click 'Analyze' to generate neural insights.", className="text-muted"),
-                None, None, None, "")
+                html.P("Enter patient data or extract clinical notes to generate neural insights.", className="text-muted"),
+                None, None, None, table_overview, fig_vital_comp, fig_shap, fig_cohort_dist, fig_cohort_corr, why_xai_ui, "")
 
-    disease_id = path.split('/')[-1] if path and '/analysis/' in path else "diabetes"
-    
-    # Map Dynamic UI IDs to Dataset Column Names to ensure correct feature alignment
-    feature_dict: dict[str, float] = {str(f_id['id']): safe_float(val) for f_id, val in zip(feature_ids, feature_values)}
-    
     try:
         if disease_id == "obesity":
             height = feature_dict.get("Height", 170)
@@ -1643,14 +2015,14 @@ def run_prediction_engine(n, path, feature_values, feature_ids):
                 prob = 95.0
                 status_text = "OBESE"
             
-            conf = "100.0%" # BMI is a deterministic calculation
+            conf = "100.0%"
         else:
-            # DIRECT CALL to Backend Prediction Logic (Avoids Render timeouts)
             input_data = InputData(features=feature_dict)
             result = api_predict(disease_id, input_data)
             
             if "error" in result:
-                return [html.Div(f"Error: {result['error']}", className="text-danger")] + [dash.no_update]*10
+                empty_fig = go.Figure().update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', xaxis=dict(visible=False), yaxis=dict(visible=False))
+                return [html.Div(f"Error: {result['error']}", className="text-danger")] + [dash.no_update]*13 + [None, empty_fig, empty_fig, fig_cohort_dist, fig_cohort_corr, html.Div(result['error'])]
             
             pred = result["prediction"]
             prob = result["probability"]
@@ -1666,7 +2038,6 @@ def run_prediction_engine(n, path, feature_values, feature_ids):
         
         pill = html.Span(level, className=f"risk-header-pill {css}")
         
-        # Visuals
         # 1. Gauge
         fig_gauge = go.Figure(go.Indicator(
             mode="gauge+number", value=prob, number={'suffix': "%", 'font': {'color': color}},
@@ -1678,27 +2049,25 @@ def run_prediction_engine(n, path, feature_values, feature_ids):
 
         # 2. Radar
         all_keys: list[str] = [str(k) for k in feature_dict]
-        radar_cats: list[str] = all_keys[:8]  # pyre-ignore
+        radar_cats: list[str] = all_keys[:8]
         radar_vals = [min(feature_dict[k], 150) for k in radar_cats]
         fig_radar = go.Figure(go.Scatterpolar(r=radar_vals, theta=radar_cats, fill='toself', line_color=color))
-        # Safely add the reference ring based on feature count
         fig_radar.add_trace(go.Scatterpolar(r=[50]*len(radar_cats), theta=radar_cats, fill=None, line_color="rgba(255,255,255,0.1)", line=dict(dash='dash')))
-        fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100], gridcolor="#444")),  # pyre-ignore
+        fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100], gridcolor="#444")),
                                 paper_bgcolor='rgba(0,0,0,0)', font_color="white", margin=dict(t=40, b=40))
 
         # 3. Bar
-        # Use first 5 features for the bar chart
-        bar_labels: list[str] = all_keys[:5]  # pyre-ignore
+        bar_labels: list[str] = all_keys[:5]
         bar_vals = [abs(feature_dict[k]) for k in bar_labels]
         fig_bar = px.bar(x=bar_vals, y=bar_labels, orientation='h', color_discrete_sequence=[color])
         fig_bar.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color="white")
 
         # 4. Line
-        fig_line = px.line(x=[1,2,3,4,5], y=[max(0.0, prob-5), prob+3, prob, prob-2, prob])  # pyre-ignore
+        fig_line = px.line(x=[1,2,3,4,5], y=[max(0.0, prob-5), prob+3, prob, prob-2, prob])
         fig_line.update_traces(line_color=color, fill='tozeroy')
         fig_line.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color="white")
 
-        # 5. Health
+        # 5. Health Score
         h_score = 100.0 - (prob * 0.8)
         fig_h = go.Figure(go.Indicator(mode="gauge+number", value=h_score, gauge={'bar': {'color': '#00f2ff'}}))
         fig_h.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color="white", margin=dict(t=20, b=20))
@@ -1712,11 +2081,34 @@ def run_prediction_engine(n, path, feature_values, feature_ids):
         rec_w = html.Div(className="rec-box", style={"borderColor": color}, children=[html.Strong("Medical Alert: "), f"Inferred risk profile: {level} PATHOLOGY."])
         rec_l = html.Div(className="rec-box", children=[html.Strong("Lifestyle Advice: "), "Immediate dietary adjustments and vitals monitoring required."])
 
+        # Patient Analytics Outputs
+        table_overview = build_health_metrics_table(feature_dict)
+        fig_vital_comp = create_vital_comparison_figure(feature_dict)
+        
+        # Extract SHAP explanation from api_predict result or compute directly
+        explanation = result.get("explanation") if isinstance(result, dict) else None
+        if not explanation and disease_id in models:
+            try:
+                features_arr = np.array(list(feature_dict.values())).reshape(1, -1)
+                explanation = explain_prediction(disease_id, models[disease_id], feature_dict, features_arr, pred, prob, status_text)
+            except Exception as e_xai:
+                print(f"XAI fallback error: {e_xai}")
+
+        fig_shap = create_shap_figure(explanation)
+        fig_cohort_dist = create_cohort_distribution_figure(patients_list, disease_id=disease_id, current_prob=prob, current_level=level)
+        fig_cohort_corr = create_cohort_correlation_figure(patients_list, disease_id=disease_id, current_age=patient_age, current_prob=prob, current_level=level)
+        why_xai_ui = build_why_prediction_ui(explanation, disease_id=disease_id, prob=prob, level=level)
+
         return (pill, conf, f"{prob}%", status_text, fig_gauge, fig_radar, fig_bar, fig_line, fig_h, 
-                "OPTIMAL" if h_score > 70 else "SUBSYSTEM STRESS", rec_n, rec_a, rec_w, rec_l, "")
+                "OPTIMAL" if h_score > 70 else "SUBSYSTEM STRESS", rec_n, rec_a, rec_w, rec_l,
+                table_overview, fig_vital_comp, fig_shap, fig_cohort_dist, fig_cohort_corr, why_xai_ui, "")
 
     except Exception as e:
-        return dash.no_update, "---", "---", "ERR", {}, {}, {}, {}, {}, "ERROR", None, None, None, None, f"Backend Connection Error: {str(e)}"
+        empty_fig = go.Figure().update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', 
+                                             xaxis=dict(visible=False), yaxis=dict(visible=False))
+        why_xai_ui = build_why_prediction_ui(None)
+        return (dash.no_update, "---", "---", "ERR", empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, 
+                "ERROR", None, None, None, None, None, empty_fig, empty_fig, fig_cohort_dist, fig_cohort_corr, why_xai_ui, f"Backend Connection Error: {str(e)}")
 
 # --- Report Generator ---
 @app.callback(
@@ -1732,9 +2124,50 @@ def generate_report(n, path, feature_values, feature_ids, notes):
     disease = path.split('/')[-1] if path else "unknown"
     feature_dict = {f_id['id']: val for f_id, val in zip(feature_ids, feature_values)}
     
-    vitals_str = "\n".join([f"{k}: {v}" for k, v in feature_dict.items()])
-    content = f"AEGIS AI MEDICAL REPORT\nFocus: {disease.upper()}\nGenerated: {datetime.now().strftime('%Y-%m-%d')}\n\nVitals:\n{vitals_str}\n\nNotes:\n{notes if notes else 'N/A'}"
-    return dict(content=content, filename=f"Health_Report_{disease}.txt")
+    # Clinical NLP extraction on notes if present
+    nlp_section = ""
+    if notes and notes.strip():
+        parsed = parse_clinical_text(notes)
+        if parsed.get("success"):
+            triage = parsed.get("triage", {})
+            alerts_str = "\n".join([f"    • {a}" for a in triage.get("alerts", [])])
+            nlp_section = (
+                f"\n------------------------------------------------------------\n"
+                f"CLINICAL NLP TRIAGE & ENTITY EXTRACTION\n"
+                f"------------------------------------------------------------\n"
+                f"Triage Severity: {triage.get('severity')}\n"
+                f"Clinical Action Plan: {triage.get('action_plan')}\n"
+                f"Identified Alert Markers:\n{alerts_str}\n"
+                f"Clinical Narrative: {parsed.get('clinical_narrative')}\n"
+            )
+
+    vitals_str = "\n".join([f"  • {k}: {val}" for k, val in feature_dict.items()])
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    content = (
+        f"============================================================\n"
+        f"AEGIS NEURAL CLINICAL SUITE - DIAGNOSTIC SUMMARY REPORT\n"
+        f"============================================================\n"
+        f"Diagnostic Domain: {disease.upper()}\n"
+        f"Generated At: {timestamp}\n"
+        f"Inference Mode: Deep Neural Multi-Disease Pipeline v2.0\n\n"
+        f"------------------------------------------------------------\n"
+        f"RECORDED BIOMETRICS & CLINICAL PARAMETERS:\n"
+        f"------------------------------------------------------------\n"
+        f"{vitals_str}\n\n"
+        f"------------------------------------------------------------\n"
+        f"CLINICAL OBSERVATIONS:\n"
+        f"------------------------------------------------------------\n"
+        f"{notes if notes and notes.strip() else 'Standard screening protocol applied.'}\n"
+        f"{nlp_section}\n"
+        f"============================================================\n"
+        f"CONFIDENTIALITY NOTICE:\n"
+        f"This AI-generated clinical intelligence report is intended\n"
+        f"for healthcare provider review. All diagnostic interpretations\n"
+        f"require certified clinical verification.\n"
+        f"============================================================\n"
+    )
+    return dict(content=content, filename=f"Aegis_Clinical_Report_{disease}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
 
 import os
 

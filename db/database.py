@@ -48,6 +48,27 @@ def init_db():
     )
     ''')
 
+    # Seed baseline patient cohort registrations if empty or low
+    try:
+        cursor.execute("SELECT COUNT(*) FROM patient_registrations")
+        if cursor.fetchone()[0] < 4:
+            demo_patients = [
+                ("Eleanor Vance", "eleanor.v@care.org", "+1-555-0142", 58, "Female", "Stroke Risk Screening", "2026-03-01"),
+                ("Marcus Sterling", "m.sterling@health.net", "+1-555-0188", 64, "Male", "Cardiovascular Track", "2026-03-02"),
+                ("Ananya Patel", "ananya.p@clinic.in", "+1-555-0129", 45, "Female", "Type-2 Diabetes Screening", "2026-03-03"),
+                ("David Kim", "dkim77@wellness.org", "+1-555-0174", 52, "Male", "Renal & Kidney Health", "2026-03-04"),
+                ("Sophia Rodriguez", "sophia.r@medicare.com", "+1-555-0193", 39, "Female", "Hepatic / Liver Profile", "2026-03-05"),
+                ("Robert Taylor", "rtaylor@globalhealth.org", "+1-555-0115", 71, "Male", "Stroke Risk Screening", "2026-03-06"),
+                ("Aisha Al-Mansoor", "aisha.m@careplus.org", "+1-555-0166", 49, "Female", "Cardiovascular Track", "2026-03-07"),
+                ("Carlos Mendez", "cmendez@mednet.org", "+1-555-0131", 62, "Male", "Hypertension & BP Track", "2026-03-08")
+            ]
+            cursor.executemany('''
+            INSERT INTO patient_registrations (full_name, email, mobile, age, gender, prediction_type, registration_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', demo_patients)
+    except Exception as e:
+        print(f"Seed patient registration warning: {e}")
+
     conn.commit()
     conn.close()
 

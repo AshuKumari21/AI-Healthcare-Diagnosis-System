@@ -12,3 +12,4 @@ joblib
 requests
 gunicorn
 flask
+shap
